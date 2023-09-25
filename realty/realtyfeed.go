@@ -28,7 +28,7 @@ type Data struct {
 	Offer          []Offer `xml:"offer"`
 }
 
-func NewRealtyFeed(client *http.Client, url string) *Feed {
+func NewFeed(client *http.Client, url string) *Feed {
 	return &Feed{
 		client: client,
 		url:    url,

@@ -121,8 +121,11 @@ type Flat struct {
 	ReadyHousing string `xml:"ready_housing"`
 }
 
-func NewFeed(url string) *Feed {
-	return &Feed{url: url}
+func NewFeed(client *http.Client, url string) *Feed {
+	return &Feed{
+		client: client,
+		url:    url,
+	}
 }
 
 func (f *Feed) Get(ctx context.Context) error {

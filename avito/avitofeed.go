@@ -28,8 +28,11 @@ type Data struct {
 	Ad            []Ad     `xml:"Ad"`
 }
 
-func NewFeed(url string) *Feed {
-	return &Feed{url: url}
+func NewFeed(client *http.Client, url string) *Feed {
+	return &Feed{
+		client: client,
+		url:    url,
+	}
 }
 
 type Ad struct {
