@@ -1,25 +1,14 @@
-package price_placements_feeds
+package validation
 
 import (
 	"encoding/xml"
 	"fmt"
-	"net/http"
 	"strconv"
 )
 
 const (
-	emptyFeed string = "feed is empty"
+	MsgEmptyFeed string = "feed is empty"
 )
-
-func statusCodeHandler(resp *http.Response) error {
-	if resp == nil {
-		return fmt.Errorf("не могу получить ответ сервера")
-	}
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("не могу получить ответ сервера. Statuscode: %v", resp.StatusCode)
-	}
-	return nil
-}
 
 type CustomInt64 struct {
 	Int64 int64
@@ -34,6 +23,7 @@ func (ci *CustomInt64) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 
 	if s == "undefined" {
 		ci.Valid = false
+
 		return nil
 	}
 
@@ -43,26 +33,31 @@ func (ci *CustomInt64) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	}
 
 	ci.Int64 = int64(customI)
+
 	return nil
 }
 
-func checkString(path string, fieldName string, value string, results *[]string) (isOk bool) {
+func CheckString(path string, fieldName string, value string, results *[]string) (isOk bool) {
 	if value == "" {
 		*results = append(*results, fmt.Sprintf("field %s.%s is empty", path, fieldName))
+
 		return false
 	}
+
 	return true
 }
 
-func checkStringWithPos(idx int, path string, fieldName string, value string, results *[]string) (isOk bool) {
+func CheckStringWithPos(idx int, path string, fieldName string, value string, results *[]string) (isOk bool) {
 	if value == "" {
 		*results = append(*results, fmt.Sprintf("field %s[%d].%s is empty", path, idx, fieldName))
+
 		return false
 	}
+
 	return true
 }
 
-func checkStringWithID(ID string, path string, fieldName string, value string, results *[]string) (isOk bool) {
+func CheckStringWithID(ID string, path string, fieldName string, value string, results *[]string) (isOk bool) {
 	var idMessage string
 	if ID == "" {
 		idMessage = "InternalID not found"
@@ -72,16 +67,19 @@ func checkStringWithID(ID string, path string, fieldName string, value string, r
 
 	if value == "" {
 		*results = append(*results, fmt.Sprintf("field %s.%s is empty. %s", path, fieldName, idMessage))
+
 		return false
 	}
 
 	return true
 }
 
-func checkZeroWithID[V int | float64 | float32](ID string, path string, fieldName string, value V, results *[]string) (isOk bool) {
+func CheckZeroWithID[V int | float64 | float32](ID string, path string, fieldName string, value V, results *[]string) (isOk bool) {
 	if value == 0 {
 		*results = append(*results, fmt.Sprintf("field %s.%s is empty. InternalID: %s", path, fieldName, ID))
+
 		return false
 	}
+
 	return true
 }

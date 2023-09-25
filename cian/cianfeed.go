@@ -1,19 +1,35 @@
-package price_placements_feeds
+package cian
 
 import (
+	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"github.com/zfullio/price-placements/transport"
+	"github.com/zfullio/price-placements/validation"
 	"io"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type CianFeed struct {
+type Feed struct {
+	client       *http.Client
+	url          string
+	isGet        bool
 	LastModified time.Time
-	FeedVersion  string   `xml:"feed_version"`
-	Object       []Object `xml:"object"`
+	Data         Data
+}
+
+type Data struct {
+	FeedVersion string   `xml:"feed_version"`
+	Object      []Object `xml:"object"`
+}
+
+func NewFeed(url string) *Feed {
+	return &Feed{url: url}
 }
 
 type Object struct {
@@ -116,20 +132,46 @@ func (cf *CustomFloat64) UnmarshalXML(d *xml.Decoder, start xml.StartElement) er
 	return nil
 }
 
-func (f *CianFeed) Get(url string) (err error) {
-	resp, err := GetResponse(url)
+func (f *Feed) Get(ctx context.Context) error {
+	err := f.GetInfo(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("can't get feed info. Error:%w", err)
 	}
+
+	resp, err := transport.GetResponse(ctx, f.client, f.url)
+	if err != nil {
+		return fmt.Errorf("can't get feed data. Error:%w", err)
+	}
+
 	defer resp.Body.Close()
 
-	err = statusCodeHandler(resp)
+	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	AttributeLastModified := resp.Header.Get("Last-Modified")
-	if AttributeLastModified != "" {
+	err = xml.Unmarshal(responseBody, &f)
+	if err != nil {
+		return err
+	}
+
+	f.isGet = true
+
+	//TODO Исправить значение f.LastModified
+
+	return nil
+}
+
+func (f *Feed) GetInfo(ctx context.Context) error {
+	resp, err := transport.GetOnlyHeader(ctx, f.client, f.url)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	attributeLastModified := resp.Header.Get(transport.HeaderLastModified)
+	if attributeLastModified != "" {
 		lastModifiedDate, err := time.Parse(time.RFC1123, resp.Header.Get("Last-Modified"))
 		if err != nil {
 			return err
@@ -138,55 +180,53 @@ func (f *CianFeed) Get(url string) (err error) {
 	} else {
 		log.Println("Header not contains `Last-Modified`")
 	}
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	err = xml.Unmarshal(responseBody, &f)
-	if err != nil {
-		return err
-	}
-	//TODO Исправить значение f.LastModified
+
 	return nil
 }
 
-func (f *CianFeed) Check() (results []string) {
-	if len(f.Object) < 2 {
-		results = append(results, emptyFeed)
-		return results
+func (f *Feed) Check() ([]string, error) {
+	if !f.isGet {
+		return nil, errors.New("feed not got")
 	}
 
-	if len(f.Object) <= 10 {
-		results = append(results, fmt.Sprintf("feed contains only %v items", len(f.Object)))
-		return results
+	results := make([]string, 0)
+
+	if len(f.Data.Object) < 2 {
+		results := append(results, validation.MsgEmptyFeed)
+		return results, nil
 	}
-	for idx, lot := range f.Object {
+
+	if len(f.Data.Object) <= 10 {
+		results = append(results, fmt.Sprintf("feed contains only %v items", len(f.Data.Object)))
+		return results, nil
+	}
+	for idx, lot := range f.Data.Object {
 		id := lot.ExternalId
 
 		if lot.ExternalId == "" {
 			results = append(results, fmt.Sprintf("field ExternalId is empty. Position: %v", idx))
 		}
-		checkStringWithID(id, "object", "Address", lot.Address, &results)
-		checkStringWithID(id, "object.Phones.PhoneSchema", "CountryCode", lot.Phones.PhoneSchema.CountryCode, &results)
-		checkStringWithID(id, "object.Phones.PhoneSchema", "Number", lot.Phones.PhoneSchema.Number, &results)
-		checkStringWithID(id, "object.LayoutPhoto.FullUrl", "IsDefault", lot.LayoutPhoto.FullUrl, &results)
-		checkStringWithID(id, "object", "Category", lot.Category, &results)
+		validation.CheckStringWithID(id, "object", "Address", lot.Address, &results)
+		validation.CheckStringWithID(id, "object.Phones.PhoneSchema", "CountryCode", lot.Phones.PhoneSchema.CountryCode, &results)
+		validation.CheckStringWithID(id, "object.Phones.PhoneSchema", "Number", lot.Phones.PhoneSchema.Number, &results)
+		validation.CheckStringWithID(id, "object.LayoutPhoto.FullUrl", "IsDefault", lot.LayoutPhoto.FullUrl, &results)
+		validation.CheckStringWithID(id, "object", "Category", lot.Category, &results)
 
 		for idx, photoSchema := range lot.Photos.PhotoSchema {
-			checkStringWithPos(idx, "object.Photos.PhotoSchema", "FullUrl", photoSchema.FullUrl, &results)
+			validation.CheckStringWithPos(idx, "object.Photos.PhotoSchema", "FullUrl", photoSchema.FullUrl, &results)
 		}
 
-		checkZeroWithID(id, "object", "FlatRoomsCount", int(lot.FlatRoomsCount), &results)
-		checkZeroWithID(id, "object", "TotalArea", int(lot.TotalArea), &results)
-		checkZeroWithID(id, "object", "FloorNumber", int(lot.FloorNumber), &results)
-		checkZeroWithID(id, "object.Building", "FloorsCount", int(lot.Building.FloorsCount), &results)
-		checkZeroWithID(id, "object.Building.Deadline", "Year", int(lot.Building.Deadline.Year), &results)
-		checkStringWithID(id, "object.Building.Deadline", "Quarter", lot.Building.Deadline.Quarter, &results)
-		checkZeroWithID(id, "object.BargainTerms.Price", "Price", int(lot.BargainTerms.Price.Float64), &results)
-		checkZeroWithID(id, "object.JKSchema", "Id", int(lot.JKSchema.ID), &results)
-		checkStringWithID(id, "object.JKSchema", "Name", lot.JKSchema.Name, &results)
-		checkZeroWithID(id, "object.JKSchema.House", "Id", int(lot.JKSchema.House.ID), &results)
-		checkStringWithID(id, "object.JKSchema.House", "Name", lot.JKSchema.House.Name, &results)
+		validation.CheckZeroWithID(id, "object", "FlatRoomsCount", int(lot.FlatRoomsCount), &results)
+		validation.CheckZeroWithID(id, "object", "TotalArea", int(lot.TotalArea), &results)
+		validation.CheckZeroWithID(id, "object", "FloorNumber", int(lot.FloorNumber), &results)
+		validation.CheckZeroWithID(id, "object.Building", "FloorsCount", int(lot.Building.FloorsCount), &results)
+		validation.CheckZeroWithID(id, "object.Building.Deadline", "Year", int(lot.Building.Deadline.Year), &results)
+		validation.CheckStringWithID(id, "object.Building.Deadline", "Quarter", lot.Building.Deadline.Quarter, &results)
+		validation.CheckZeroWithID(id, "object.BargainTerms.Price", "Price", int(lot.BargainTerms.Price.Float64), &results)
+		validation.CheckZeroWithID(id, "object.JKSchema", "Id", int(lot.JKSchema.ID), &results)
+		validation.CheckStringWithID(id, "object.JKSchema", "Name", lot.JKSchema.Name, &results)
+		validation.CheckZeroWithID(id, "object.JKSchema.House", "Id", int(lot.JKSchema.House.ID), &results)
+		validation.CheckStringWithID(id, "object.JKSchema.House", "Name", lot.JKSchema.House.Name, &results)
 
 		if lot.Building.Deadline.Year < int64(time.Now().Year()) && lot.Building.Deadline.IsComplete == false {
 			results = append(results, fmt.Sprintf("field Building.Deadline is False for %v. InternalID: %v", lot.Building.Deadline.Year, lot.ExternalId))
@@ -199,5 +239,5 @@ func (f *CianFeed) Check() (results []string) {
 		}
 	}
 
-	return results
+	return results, nil
 }
